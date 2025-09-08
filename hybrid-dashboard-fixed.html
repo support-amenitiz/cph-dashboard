@@ -643,32 +643,32 @@
     </style>
 </head>
 <body>
+    <button class="settings-btn" onclick="openSettings()">⚙️ Settings</button>
+    
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Dashboard Settings</h2>
+                <span class="close" onclick="closeSettings()">&times;</span>
+            </div>
+            
+            <div class="webhook-input-group">
+                <label for="outboundWebhook">Outbound Webhook URL</label>
+                <input type="text" id="outboundWebhook" placeholder="https://hooks.n8n.com/webhook/...">
+                <small>Enter your n8n webhook URL for fetching admin-created tickets</small>
+            </div>
+            
+            <button class="save-settings" onclick="saveSettings()">Save Settings</button>
+        </div>
+    </div>
+    
     <div class="container">
-        <button class="settings-btn" onclick="openSettings()">⚙️ Settings</button>
-        
         <div class="header">
             <div class="amenitiz-logo">Amenitiz</div>
             <h1>Intercom Tickets Dashboard</h1>
             <p>Track Closed Admin-Created Tickets & WCI Attribution<br>Hospitality Technology Solutions</p>
             <span id="webhookStatus" class="webhook-status">Checking status...</span>
-        </div>
-        
-        <!-- Settings Modal -->
-        <div id="settingsModal" class="modal">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h2>⚙️ Configuration</h2>
-                    <span class="close" onclick="closeSettings()">&times;</span>
-                </div>
-                
-                <div class="webhook-input-group">
-                    <label for="outboundWebhook">Outbound (Admin-Created) Webhook URL:</label>
-                    <input type="text" id="outboundWebhook" placeholder="https://your-n8n-instance.com/webhook/outbound" />
-                    <small>For fetching closed admin-created tickets</small>
-                </div>
-                
-                <button class="save-settings" onclick="saveSettings()">Save Settings</button>
-            </div>
         </div>
         
         <div class="card">
@@ -686,19 +686,20 @@
                 
                 <div class="info-box">
                     <h4>What this tracks:</h4>
-                    <p>• Closed conversations created by admins (source.author.type = "admin")</p>
-                    <p>• Groups by admin who created the ticket</p>
-                    <p>• Shows closed tickets count per agent</p>
+                    <p>• Conversations created by admins (source.author.type = "admin")</p>
+                    <p>• That were <strong>closed</strong> within the selected date range</p>
+                    <p>• Uses statistics.last_close_at for filtering (not creation date)</p>
+                    <p>• Groups results by the admin who originally created each conversation</p>
                 </div>
                 
                 <div class="date-selector">
                     <div class="form-group">
-                        <label for="startDate1">Start Date</label>
+                        <label for="startDate1">Closure Start Date</label>
                         <input type="date" id="startDate1" />
                     </div>
                     
                     <div class="form-group">
-                        <label for="endDate1">End Date</label>
+                        <label for="endDate1">Closure End Date</label>
                         <input type="date" id="endDate1" />
                     </div>
                     
@@ -776,7 +777,12 @@
             </div>
             
             <div class="card">
-                <h2 style="margin-bottom: 20px; color: #1f2937;">Detailed Tickets</h2>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 style="color: #1f2937; margin: 0;">Detailed Tickets</h2>
+                    <button class="btn btn-success" onclick="downloadDetailedTicketsCSV()" style="margin: 0;">
+                        📥 Download Detailed Tickets
+                    </button>
+                </div>
                 <div class="table-container">
                     <table id="ticketTable">
                         <thead>
@@ -817,7 +823,7 @@
             
             // Remove extra whitespace and clean up basic formatting
             t = t.replace(/\s+/g, ' ').trim();
-            t = t.replace(/^[-–—>]*\s*|\s*[-–—<]*$/g, '');
+            t = t.replace(/^[-—–>]*\s*|\s*[-—–<]*$/g, '');
             
             return t;
         }
@@ -855,7 +861,6 @@
             document.getElementById('outboundWebhook').value = OUTBOUND_WEBHOOK_URL;
             
             updateWebhookStatus();
-            updateDataPersistenceIndicators();
         };
         
         function updateWebhookStatus() {
@@ -1110,12 +1115,9 @@
                     return;
                 }
                 
-                console.log('Column indexes:', { replyColumnIndex, idColumnIndex, closedColumnIndex });
-                
                 // Process rows
                 const agentMap = {};
                 const tickets = [];
-                let debugCount = 0;
                 
                 for (let i = 1; i < lines.length; i++) {
                     if (!lines[i].trim()) continue;
@@ -1127,24 +1129,10 @@
                     const ticketId = cols[idColumnIndex] || `Ticket_${i}`;
                     const closedDate = cols[closedColumnIndex] || '';
                     
-                    // Debug specific ticket
-                    if (ticketId === '565907') {
-                        console.log('DEBUG - Ticket 565907 found!');
-                        console.log('Raw line:', lines[i]);
-                        console.log('Parsed columns:', cols);
-                        console.log('Replied to column:', repliedTo);
-                        debugCount++;
-                    }
-                    
                     if (!repliedTo || repliedTo === '') continue;
                     
                     // Parse the "replied to" column to get the last agent
                     const lastAgent = _getLastTeammate(repliedTo);
-                    
-                    // More debug for 565907
-                    if (ticketId === '565907') {
-                        console.log('Parsed last agent:', lastAgent);
-                    }
                     
                     if (lastAgent) {
                         if (!agentMap[lastAgent]) {
@@ -1164,8 +1152,6 @@
                         });
                     }
                 }
-                
-                console.log('Debug count for 565907:', debugCount);
                 
                 // Convert to array and sort
                 const agents = Object.values(agentMap).map(agent => ({
@@ -1307,6 +1293,45 @@
                 });
                 
                 filename = `Combined_Report_${dateStr}.csv`;
+            }
+            
+            // Create download link
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            window.URL.revokeObjectURL(url);
+            
+            showStatus(`Downloaded ${filename}`, 'success');
+        }
+        
+        function downloadDetailedTicketsCSV() {
+            const dateStr = new Date().toISOString().split('T')[0];
+            let csv = '';
+            let filename = '';
+            
+            if (currentData.reportType === 'Admin-Created Closed Tickets') {
+                // Outbound tickets CSV
+                csv = 'Ticket ID,Created Date,Closed Date,Agent,Title/Customer,Type\n';
+                currentData.tickets.forEach(ticket => {
+                    csv += `"${ticket.conversation_id}","${ticket.created_date || ''}","${ticket.closed_date || '-'}","${ticket.creator_name || ''}","${ticket.title || ticket.customer_name || 'N/A'}","Admin-Created"\n`;
+                });
+                filename = `Detailed_Outbound_Tickets_${dateStr}.csv`;
+                
+            } else if (currentData.reportType === 'WCI Attribution') {
+                // WCI tickets CSV
+                csv = 'Ticket ID,Created Date,Closed Date,Agent,Title/Customer,Type\n';
+                currentData.tickets.forEach(ticket => {
+                    csv += `"${ticket.conversation_id}","-","${ticket.closed_date || '-'}","${ticket.last_updater || ''}","WCI Ticket","WCI"\n`;
+                });
+                filename = `Detailed_WCI_Tickets_${dateStr}.csv`;
+            }
+            
+            if (!csv) {
+                showStatus('No ticket data available to download', 'error');
+                return;
             }
             
             // Create download link
