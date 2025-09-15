@@ -375,6 +375,33 @@
             box-shadow: 0 8px 25px rgba(220, 38, 38, 0.3);
         }
         
+        .loading-indicator {
+            display: none;
+            text-align: center;
+            padding: 40px;
+            font-size: 1.1rem;
+            color: #64748b;
+            background: rgba(37, 99, 235, 0.05);
+            border-radius: 16px;
+            margin: 20px 0;
+            border: 1px solid rgba(37, 99, 235, 0.1);
+        }
+        
+        .loading-indicator.show {
+            display: block;
+        }
+        
+        .loading-spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(37, 99, 235, 0.3);
+            border-radius: 50%;
+            border-top-color: #2563eb;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 12px;
+        }
+        
         .status {
             margin-top: 20px;
             padding: 20px;
@@ -654,7 +681,7 @@
             </div>
             
             <div class="webhook-input-group">
-                <label for="outboundWebhook">Outbound Webhook URL</label>
+                <label for="outboundWebhook">n8n Webhook URL</label>
                 <input type="text" id="outboundWebhook" placeholder="https://hooks.n8n.com/webhook/...">
                 <small>Enter your n8n webhook URL for fetching admin-created tickets</small>
             </div>
@@ -689,7 +716,7 @@
                     <p>• Conversations created by admins (source.author.type = "admin")</p>
                     <p>• That were <strong>closed</strong> within the selected date range</p>
                     <p>• Uses statistics.last_close_at for filtering (not creation date)</p>
-                    <p>• Groups results by the admin who originally created each conversation</p>
+                    <p>• Groups results by the admin who <strong>closed</strong> each conversation</p>
                 </div>
                 
                 <div class="date-selector">
@@ -707,6 +734,12 @@
                         <span id="btnText1">Generate Report</span>
                         <span id="btnSpinner1" class="spinner" style="display: none;"></span>
                     </button>
+                </div>
+                
+                <div id="outboundLoading" class="loading-indicator">
+                    <div class="loading-spinner"></div>
+                    <strong>Loading admin-created tickets...</strong><br>
+                    <span>Fetching data from Intercom API and processing ticket details</span>
                 </div>
             </div>
             
@@ -735,6 +768,12 @@
                 <div id="fileInfo" style="display: none; margin: 20px 0; padding: 20px; background: rgba(37, 99, 235, 0.05); border-radius: 16px;">
                     <strong>File loaded:</strong> <span id="fileName"></span><br>
                     <strong>Rows:</strong> <span id="rowCount"></span>
+                </div>
+                
+                <div id="wciLoading" class="loading-indicator">
+                    <div class="loading-spinner"></div>
+                    <strong>Processing WCI tickets...</strong><br>
+                    <span>Analyzing CSV data and attributing tickets to agents</span>
                 </div>
             </div>
             
@@ -816,34 +855,8 @@
             reportType: ''
         };
 
-        // --- Simplified helpers for comma-delimited teammate parsing ---
-        function _cleanAgentToken(token) {
-            if (!token) return '';
-            let t = String(token).trim();
-            
-            // Remove extra whitespace and clean up basic formatting
-            t = t.replace(/\s+/g, ' ').trim();
-            t = t.replace(/^[-—–>]*\s*|\s*[-—–<]*$/g, '');
-            
-            return t;
-        }
-
-        function _getLastTeammate(repliedToCell) {
-            if (!repliedToCell) return '';
-            
-            const cellValue = String(repliedToCell).trim();
-            
-            // Split by commas and clean each part
-            const parts = cellValue.split(',').map(part => _cleanAgentToken(part)).filter(part => part);
-            
-            // Return the last valid name (most recent teammate)
-            return parts.length > 0 ? parts[parts.length - 1] : '';
-        }
-        // --- End helpers ---
-
-        
-        // Webhook URL
-        let OUTBOUND_WEBHOOK_URL = localStorage.getItem('outbound_webhook') || '';
+        // Webhook URL - HARDCODED
+        let OUTBOUND_WEBHOOK_URL = 'https://laurenautomations.app.n8n.cloud/webhook/outbound';
         
         // Set default dates and check status
         window.onload = function() {
@@ -851,13 +864,8 @@
             const startDate = new Date();
             startDate.setDate(startDate.getDate() - 7);
             
-            const startDateStr = startDate.toISOString().split('T')[0];
-            const endDateStr = endDate.toISOString().split('T')[0];
-            
-            document.getElementById('startDate1').value = startDateStr;
-            document.getElementById('endDate1').value = endDateStr;
-            
-            // Load webhook URL into settings
+            document.getElementById('startDate1').value = startDate.toISOString().split('T')[0];
+            document.getElementById('endDate1').value = endDate.toISOString().split('T')[0];
             document.getElementById('outboundWebhook').value = OUTBOUND_WEBHOOK_URL;
             
             updateWebhookStatus();
@@ -869,7 +877,7 @@
                 statusEl.textContent = '✅ Webhook configured';
                 statusEl.className = 'webhook-status configured';
             } else {
-                statusEl.textContent = '⚠️ Configure webhook for Outbound';
+                statusEl.textContent = '⚠️ Configure webhook URL';
                 statusEl.className = 'webhook-status not-configured';
             }
         }
@@ -890,11 +898,14 @@
             showStatus('Settings saved successfully!', 'success');
         }
         
-        // Close modal when clicking outside
         window.onclick = function(event) {
-            const modal = document.getElementById('settingsModal');
-            if (event.target == modal) {
+            const settingsModal = document.getElementById('settingsModal');
+            const mergedModal = document.getElementById('mergedModal');
+            
+            if (event.target == settingsModal) {
                 closeSettings();
+            } else if (event.target == mergedModal) {
+                closeMergedView();
             }
         }
         
@@ -909,12 +920,12 @@
             });
             document.getElementById(tabName).classList.add('active');
             
-            // Hide results when switching tabs
             document.getElementById('results').style.display = 'none';
         }
         
-        // Outbound webhook fetch
         async function fetchOutbound() {
+            console.log('fetchOutbound called');
+            
             if (!OUTBOUND_WEBHOOK_URL) {
                 showStatus('Please configure the webhook URL in settings', 'error');
                 openSettings();
@@ -929,12 +940,17 @@
                 return;
             }
             
-            showStatus('Fetching closed admin-created tickets...', 'loading');
+            console.log('Starting fetch with dates:', startDate, endDate);
+            
+            // Show loading
+            document.getElementById('outboundLoading').classList.add('show');
             document.getElementById('btnText1').style.display = 'none';
             document.getElementById('btnSpinner1').style.display = 'inline-block';
             document.querySelector('#outbound .btn-primary').disabled = true;
             
             try {
+                console.log('Making request to:', OUTBOUND_WEBHOOK_URL);
+                
                 const response = await fetch(OUTBOUND_WEBHOOK_URL, {
                     method: 'POST',
                     headers: {
@@ -946,96 +962,161 @@
                     })
                 });
                 
+                console.log('Response status:', response.status);
+                
                 if (!response.ok) {
-                    throw new Error(`Webhook returned status ${response.status}`);
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
                 
                 const data = await response.json();
+                console.log('Response data:', data);
                 
-                if (!data.success) {
-                    throw new Error(data.error || 'Failed to fetch data');
+                // Process the data - be flexible with format
+                let agents = [];
+                let tickets = [];
+                
+                if (Array.isArray(data)) {
+                    tickets = data;
+                } else if (data && typeof data === 'object') {
+                    agents = data.agents || [];
+                    tickets = data.tickets || [];
+                    
+                    if (!tickets.length && data.conversation_id) {
+                        tickets = [data];
+                    }
                 }
                 
-                outboundData = data;
+                console.log('Processed - Agents:', agents.length, 'Tickets:', tickets.length);
+                
+                if (!tickets.length) {
+                    showStatus('No tickets found for the selected date range', 'error');
+                    return;
+                }
+                
+                outboundData = { agents, tickets };
+                currentData.agents = agents;
+                currentData.tickets = tickets;
                 currentData.reportType = 'Admin-Created Closed Tickets';
-                processOutboundData(data);
+                
+                displayResults();
                 
             } catch (error) {
-                console.error('Error:', error);
+                console.error('Fetch error:', error);
                 showStatus(`Error: ${error.message}`, 'error');
             } finally {
+                document.getElementById('outboundLoading').classList.remove('show');
                 document.getElementById('btnText1').style.display = 'inline';
                 document.getElementById('btnSpinner1').style.display = 'none';
                 document.querySelector('#outbound .btn-primary').disabled = false;
             }
         }
         
-        function processOutboundData(data) {
-            currentData.agents = data.agents || [];
-            currentData.tickets = data.tickets || [];
+        function displayResults() {
+            console.log('Displaying results for:', currentData.reportType);
+            console.log('Data:', currentData);
             
             document.getElementById('results').style.display = 'block';
             
-            document.getElementById('reportTypeBadge').innerHTML = 
-                '<span class="metric-badge outbound">Admin-Created</span>';
+            // Update badge
+            let badgeHtml = '';
+            if (currentData.reportType === 'Admin-Created Closed Tickets') {
+                badgeHtml = '<span class="metric-badge outbound">Admin-Created</span>';
+            } else if (currentData.reportType === 'WCI Attribution') {
+                badgeHtml = '<span class="metric-badge wci">WCI Attribution</span>';
+            }
+            document.getElementById('reportTypeBadge').innerHTML = badgeHtml;
             
             const totalTickets = currentData.tickets.length;
-            const totalAgents = currentData.agents.length;
+            const totalAgents = currentData.agents.length || new Set(currentData.tickets.map(t => t.closer_name || t.creator_name || t.last_updater)).size;
             const avgPerAgent = totalAgents > 0 ? (totalTickets / totalAgents).toFixed(1) : 0;
             
-            const statsHtml = `
+            document.getElementById('summaryStats').innerHTML = `
                 <div class="stat-card">
                     <h3>${totalTickets}</h3>
-                    <p>Closed Tickets</p>
+                    <p>Total Tickets</p>
                 </div>
                 <div class="stat-card">
                     <h3>${totalAgents}</h3>
-                    <p>Active Admins</p>
+                    <p>Active Agents</p>
                 </div>
                 <div class="stat-card">
                     <h3>${avgPerAgent}</h3>
-                    <p>Avg per Admin</p>
+                    <p>Avg per Agent</p>
                 </div>
                 <div class="stat-card">
-                    <h3>${data.closure_rate || '100%'}</h3>
-                    <p>Closure Rate</p>
+                    <h3>100%</h3>
+                    <p>Success Rate</p>
                 </div>
             `;
-            document.getElementById('summaryStats').innerHTML = statsHtml;
             
+            // Agent performance table
             const agentTableBody = document.getElementById('agentTableBody');
             agentTableBody.innerHTML = '';
             
-            currentData.agents.forEach(agent => {
+            let agentsToShow = currentData.agents;
+            
+            // If no agents array, create from tickets
+            if (!agentsToShow.length) {
+                const agentMap = {};
+                currentData.tickets.forEach(ticket => {
+                    const agentName = ticket.closer_name || ticket.creator_name || ticket.last_updater || 'Unknown';
+                    if (!agentMap[agentName]) {
+                        agentMap[agentName] = {
+                            admin_name: agentName,
+                            closed_count: 0,
+                            ticket_ids: []
+                        };
+                    }
+                    agentMap[agentName].closed_count++;
+                    agentMap[agentName].ticket_ids.push(ticket.conversation_id);
+                });
+                agentsToShow = Object.values(agentMap).map(a => ({
+                    ...a,
+                    ticket_ids: a.ticket_ids.join(', ')
+                })).sort((a, b) => b.closed_count - a.closed_count);
+            }
+            
+            agentsToShow.forEach(agent => {
+                const count = agent.closed_count || agent.tickets_handled || 0;
+                const ticketIds = agent.ticket_ids || '';
+                const badge = currentData.reportType === 'WCI Attribution' ? 'wci' : 'outbound';
+                const badgeText = currentData.reportType === 'WCI Attribution' ? 'WCI' : 'Admin-Created';
+                
                 const row = agentTableBody.insertRow();
                 row.innerHTML = `
                     <td><strong>${agent.admin_name}</strong></td>
-                    <td><strong>${agent.closed_count || agent.tickets_closed || 0}</strong></td>
-                    <td style="font-size: 0.9em;">${agent.ticket_ids || agent.closed_ticket_ids || ''}</td>
-                    <td><span class="metric-badge outbound">Outbound</span></td>
+                    <td><strong>${count}</strong></td>
+                    <td style="font-size: 0.9em;">${ticketIds}</td>
+                    <td><span class="metric-badge ${badge}">${badgeText}</span></td>
                 `;
             });
             
+            // Individual tickets table
             const ticketTableBody = document.getElementById('ticketTableBody');
             ticketTableBody.innerHTML = '';
             
             currentData.tickets.forEach(ticket => {
+                const badge = currentData.reportType === 'WCI Attribution' ? 'wci' : 'outbound';
+                const badgeText = currentData.reportType === 'WCI Attribution' ? 'WCI' : 'Admin-Created';
+                const agentName = ticket.closer_name || ticket.creator_name || ticket.last_updater || '-';
+                const title = ticket.title || ticket.customer_name || 'WCI Ticket' || 'N/A';
+                
                 const row = ticketTableBody.insertRow();
                 row.innerHTML = `
                     <td><strong>${ticket.conversation_id}</strong></td>
-                    <td>${ticket.created_date}</td>
+                    <td>${ticket.created_date || '-'}</td>
                     <td>${ticket.closed_date || '-'}</td>
-                    <td>${ticket.creator_name}</td>
-                    <td>${ticket.title || ticket.customer_name || 'N/A'}</td>
-                    <td><span class="metric-badge outbound">Admin-Created</span></td>
+                    <td>${agentName}</td>
+                    <td>${title}</td>
+                    <td><span class="metric-badge ${badge}">${badgeText}</span></td>
                 `;
             });
             
-            showStatus(`Loaded ${totalTickets} closed tickets from ${totalAgents} admins`, 'success');
+            showStatus(`Loaded ${totalTickets} tickets from ${totalAgents} agents`, 'success');
             updateCombinedButton();
         }
         
-        // CSV File handling
+        // CSV handling
         const dropZone = document.getElementById('dropZone');
         
         dropZone.addEventListener('dragover', (e) => {
@@ -1084,18 +1165,27 @@
             result.push(current.trim());
             return result;
         }
+        
+        function _getLastTeammate(repliedToCell) {
+            if (!repliedToCell) return '';
+            
+            const cellValue = String(repliedToCell).trim();
+            const parts = cellValue.split(',').map(part => part.trim().replace(/^[-—–>]*\s*|\s*[-—–<]*$/g, '')).filter(part => part);
+            
+            return parts.length > 0 ? parts[parts.length - 1] : '';
+        }
 
         function processCSVFile(file) {
+            document.getElementById('wciLoading').classList.add('show');
+            
             const reader = new FileReader();
             
             reader.onload = function(e) {
                 const csv = e.target.result;
                 const lines = csv.split('\n');
                 
-                // Parse headers with proper CSV parsing
                 const headers = parseCSVLine(lines[0]).map(h => h.replace(/"/g, ''));
                 
-                // Find the column index for "Teammate replied to"
                 const replyColumnIndex = headers.findIndex(h => 
                     h.toLowerCase().includes('teammate replied') || 
                     h.toLowerCase().includes('replied to')
@@ -1106,32 +1196,25 @@
                     h === 'Conversation ID'
                 );
                 
-                const closedColumnIndex = headers.findIndex(h => 
-                    h.toLowerCase().includes('closed at')
-                );
-                
                 if (replyColumnIndex === -1) {
                     showStatus('Error: Could not find "Teammate replied to" column', 'error');
+                    document.getElementById('wciLoading').classList.remove('show');
                     return;
                 }
                 
-                // Process rows
                 const agentMap = {};
                 const tickets = [];
                 
                 for (let i = 1; i < lines.length; i++) {
                     if (!lines[i].trim()) continue;
                     
-                    // Use proper CSV parsing instead of simple split
                     const cols = parseCSVLine(lines[i]).map(c => c.replace(/"/g, ''));
                     
                     const repliedTo = cols[replyColumnIndex];
                     const ticketId = cols[idColumnIndex] || `Ticket_${i}`;
-                    const closedDate = cols[closedColumnIndex] || '';
                     
                     if (!repliedTo || repliedTo === '') continue;
                     
-                    // Parse the "replied to" column to get the last agent
                     const lastAgent = _getLastTeammate(repliedTo);
                     
                     if (lastAgent) {
@@ -1147,122 +1230,39 @@
                         
                         tickets.push({
                             conversation_id: ticketId,
-                            closed_date: closedDate.split(' ')[0],
+                            closed_date: '-',
                             last_updater: lastAgent
                         });
                     }
                 }
                 
-                // Convert to array and sort
                 const agents = Object.values(agentMap).map(agent => ({
                     ...agent,
                     ticket_ids: agent.ticket_ids.join(', ')
                 }));
                 agents.sort((a, b) => b.tickets_handled - a.tickets_handled);
                 
-                // Store WCI data
-                wciData = {
-                    agents: agents,
-                    tickets: tickets,
-                    total_tickets: tickets.length,
-                    total_agents: agents.length
-                };
+                wciData = { agents, tickets };
+                currentData.agents = agents;
+                currentData.tickets = tickets;
+                currentData.reportType = 'WCI Attribution';
                 
-                // Display results
-                displayWCIResults(wciData);
+                displayResults();
                 
-                // Update file info
                 document.getElementById('fileInfo').style.display = 'block';
                 document.getElementById('fileName').textContent = file.name;
                 document.getElementById('rowCount').textContent = lines.length - 1;
+                
+                document.getElementById('wciLoading').classList.remove('show');
             };
             
             reader.readAsText(file);
-        }
-        
-        function displayWCIResults(data) {
-            currentData.agents = data.agents;
-            currentData.tickets = data.tickets;
-            currentData.reportType = 'WCI Attribution';
-            
-            document.getElementById('results').style.display = 'block';
-            
-            document.getElementById('reportTypeBadge').innerHTML = 
-                '<span class="metric-badge wci">WCI Attribution</span>';
-            
-            const totalTickets = data.total_tickets;
-            const totalAgents = data.total_agents;
-            const avgPerAgent = totalAgents > 0 ? (totalTickets / totalAgents).toFixed(1) : 0;
-            
-            const statsHtml = `
-                <div class="stat-card">
-                    <h3>${totalTickets}</h3>
-                    <p>WCI Tickets</p>
-                </div>
-                <div class="stat-card">
-                    <h3>${totalAgents}</h3>
-                    <p>Agents Involved</p>
-                </div>
-                <div class="stat-card">
-                    <h3>${avgPerAgent}</h3>
-                    <p>Avg per Agent</p>
-                </div>
-                <div class="stat-card">
-                    <h3>100%</h3>
-                    <p>Attribution Rate</p>
-                </div>
-            `;
-            document.getElementById('summaryStats').innerHTML = statsHtml;
-            
-            const agentTableBody = document.getElementById('agentTableBody');
-            agentTableBody.innerHTML = '';
-            
-            data.agents.forEach(agent => {
-                const row = agentTableBody.insertRow();
-                row.innerHTML = `
-                    <td><strong>${agent.admin_name}</strong></td>
-                    <td><strong>${agent.tickets_handled}</strong></td>
-                    <td style="font-size: 0.9em;">${agent.ticket_ids}</td>
-                    <td><span class="metric-badge wci">WCI</span></td>
-                `;
-            });
-            
-            const ticketTableBody = document.getElementById('ticketTableBody');
-            ticketTableBody.innerHTML = '';
-            
-            data.tickets.forEach(ticket => {
-                const row = ticketTableBody.insertRow();
-                row.innerHTML = `
-                    <td><strong>${ticket.conversation_id}</strong></td>
-                    <td>-</td>
-                    <td>${ticket.closed_date || '-'}</td>
-                    <td>${ticket.last_updater}</td>
-                    <td>WCI Ticket</td>
-                    <td><span class="metric-badge wci">WCI</span></td>
-                `;
-            });
-            
-            showStatus(`Processed ${totalTickets} WCI tickets with ${totalAgents} agents`, 'success');
-            updateCombinedButton();
         }
         
         function updateCombinedButton() {
             const btn = document.getElementById('combinedBtn');
             if (outboundData && wciData) {
                 btn.style.display = 'inline-block';
-            }
-        }
-        
-        function showStatus(message, type) {
-            const statusDiv = document.getElementById('status');
-            statusDiv.className = `status ${type}`;
-            statusDiv.textContent = message;
-            statusDiv.style.display = 'block';
-            
-            if (type === 'success') {
-                setTimeout(() => {
-                    statusDiv.style.display = 'none';
-                }, 5000);
             }
         }
         
@@ -1282,12 +1282,10 @@
             } else if (type === 'combined' && outboundData && wciData) {
                 csv = 'Report Type,Agent Name,Tickets Count,Ticket IDs\n';
                 
-                // Add outbound data
                 outboundData.agents.forEach(agent => {
-                    csv += `"Outbound","${agent.admin_name}","${agent.closed_count || 0}","${agent.ticket_ids || agent.closed_ticket_ids || ''}"\n`;
+                    csv += `"Outbound","${agent.admin_name}","${agent.closed_count || 0}","${agent.ticket_ids || ''}"\n`;
                 });
                 
-                // Add WCI data
                 wciData.agents.forEach(agent => {
                     csv += `"WCI","${agent.admin_name}","${agent.tickets_handled}","${agent.ticket_ids}"\n`;
                 });
@@ -1295,7 +1293,6 @@
                 filename = `Combined_Report_${dateStr}.csv`;
             }
             
-            // Create download link
             const blob = new Blob([csv], { type: 'text/csv' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1309,32 +1306,18 @@
         
         function downloadDetailedTicketsCSV() {
             const dateStr = new Date().toISOString().split('T')[0];
-            let csv = '';
-            let filename = '';
+            let csv = 'Ticket ID,Created Date,Closed Date,Agent,Title/Customer,Type\n';
             
-            if (currentData.reportType === 'Admin-Created Closed Tickets') {
-                // Outbound tickets CSV
-                csv = 'Ticket ID,Created Date,Closed Date,Agent,Title/Customer,Type\n';
-                currentData.tickets.forEach(ticket => {
-                    csv += `"${ticket.conversation_id}","${ticket.created_date || ''}","${ticket.closed_date || '-'}","${ticket.creator_name || ''}","${ticket.title || ticket.customer_name || 'N/A'}","Admin-Created"\n`;
-                });
-                filename = `Detailed_Outbound_Tickets_${dateStr}.csv`;
+            currentData.tickets.forEach(ticket => {
+                const agentName = ticket.closer_name || ticket.creator_name || ticket.last_updater || '';
+                const title = ticket.title || ticket.customer_name || 'WCI Ticket' || 'N/A';
+                const type = currentData.reportType === 'WCI Attribution' ? 'WCI' : 'Admin-Created';
                 
-            } else if (currentData.reportType === 'WCI Attribution') {
-                // WCI tickets CSV
-                csv = 'Ticket ID,Created Date,Closed Date,Agent,Title/Customer,Type\n';
-                currentData.tickets.forEach(ticket => {
-                    csv += `"${ticket.conversation_id}","-","${ticket.closed_date || '-'}","${ticket.last_updater || ''}","WCI Ticket","WCI"\n`;
-                });
-                filename = `Detailed_WCI_Tickets_${dateStr}.csv`;
-            }
+                csv += `"${ticket.conversation_id}","${ticket.created_date || ''}","${ticket.closed_date || '-'}","${agentName}","${title}","${type}"\n`;
+            });
             
-            if (!csv) {
-                showStatus('No ticket data available to download', 'error');
-                return;
-            }
+            const filename = `Detailed_${currentData.reportType.replace(/\s+/g, '_')}_Tickets_${dateStr}.csv`;
             
-            // Create download link
             const blob = new Blob([csv], { type: 'text/csv' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1344,6 +1327,19 @@
             window.URL.revokeObjectURL(url);
             
             showStatus(`Downloaded ${filename}`, 'success');
+        }
+        
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+            statusDiv.style.display = 'block';
+            
+            if (type === 'success') {
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                }, 5000);
+            }
         }
     </script>
 </body>
