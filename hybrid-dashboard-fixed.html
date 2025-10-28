@@ -672,7 +672,6 @@
 <body>
     <button class="settings-btn" onclick="openSettings()">⚙️ Settings</button>
     
-    <!-- Settings Modal -->
     <div id="settingsModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -704,7 +703,6 @@
                 <button class="tab" onclick="switchTab('wci')">WCI Attribution (CSV)</button>
             </div>
             
-            <!-- Admin-Created Tickets Tab -->
             <div id="outbound" class="tab-content active">
                 <h2 style="margin-bottom: 20px; color: #1f2937;">
                     Admin-Created Closed Tickets 
@@ -743,7 +741,6 @@
                 </div>
             </div>
             
-            <!-- WCI CSV Upload Tab -->
             <div id="wci" class="tab-content">
                 <h2 style="margin-bottom: 20px; color: #1f2937;">
                     WCI Attribution Analysis 
@@ -756,6 +753,7 @@
                     <p>• Upload the CSV file below</p>
                     <p>• System will automatically attribute tickets to the last agent who replied</p>
                     <p>• Uses "Teammate replied to" column for attribution (takes the last name after comma)</p>
+                    <p>• Extracts both creation date and close date from the CSV</p>
                 </div>
                 
                 <div class="file-upload-area" id="dropZone" onclick="document.getElementById('csvFile').click()">
@@ -846,7 +844,6 @@
     </div>
     
     <script>
-        // Storage for both reports
         let outboundData = null;
         let wciData = null;
         let currentData = {
@@ -855,10 +852,8 @@
             reportType: ''
         };
 
-        // Webhook URL - HARDCODED
         let OUTBOUND_WEBHOOK_URL = 'https://laurenautomations.app.n8n.cloud/webhook/outbound';
         
-        // Set default dates and check status
         window.onload = function() {
             const endDate = new Date();
             const startDate = new Date();
@@ -900,12 +895,9 @@
         
         window.onclick = function(event) {
             const settingsModal = document.getElementById('settingsModal');
-            const mergedModal = document.getElementById('mergedModal');
             
             if (event.target == settingsModal) {
                 closeSettings();
-            } else if (event.target == mergedModal) {
-                closeMergedView();
             }
         }
         
@@ -924,8 +916,6 @@
         }
         
         async function fetchOutbound() {
-            console.log('fetchOutbound called');
-            
             if (!OUTBOUND_WEBHOOK_URL) {
                 showStatus('Please configure the webhook URL in settings', 'error');
                 openSettings();
@@ -940,17 +930,12 @@
                 return;
             }
             
-            console.log('Starting fetch with dates:', startDate, endDate);
-            
-            // Show loading
             document.getElementById('outboundLoading').classList.add('show');
             document.getElementById('btnText1').style.display = 'none';
             document.getElementById('btnSpinner1').style.display = 'inline-block';
             document.querySelector('#outbound .btn-primary').disabled = true;
             
             try {
-                console.log('Making request to:', OUTBOUND_WEBHOOK_URL);
-                
                 const response = await fetch(OUTBOUND_WEBHOOK_URL, {
                     method: 'POST',
                     headers: {
@@ -962,16 +947,12 @@
                     })
                 });
                 
-                console.log('Response status:', response.status);
-                
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
                 
                 const data = await response.json();
-                console.log('Response data:', data);
                 
-                // Process the data - be flexible with format
                 let agents = [];
                 let tickets = [];
                 
@@ -986,8 +967,6 @@
                     }
                 }
                 
-                console.log('Processed - Agents:', agents.length, 'Tickets:', tickets.length);
-                
                 if (!tickets.length) {
                     showStatus('No tickets found for the selected date range', 'error');
                     return;
@@ -1001,7 +980,6 @@
                 displayResults();
                 
             } catch (error) {
-                console.error('Fetch error:', error);
                 showStatus(`Error: ${error.message}`, 'error');
             } finally {
                 document.getElementById('outboundLoading').classList.remove('show');
@@ -1012,12 +990,8 @@
         }
         
         function displayResults() {
-            console.log('Displaying results for:', currentData.reportType);
-            console.log('Data:', currentData);
-            
             document.getElementById('results').style.display = 'block';
             
-            // Update badge
             let badgeHtml = '';
             if (currentData.reportType === 'Admin-Created Closed Tickets') {
                 badgeHtml = '<span class="metric-badge outbound">Admin-Created</span>';
@@ -1049,13 +1023,11 @@
                 </div>
             `;
             
-            // Agent performance table
             const agentTableBody = document.getElementById('agentTableBody');
             agentTableBody.innerHTML = '';
             
             let agentsToShow = currentData.agents;
             
-            // If no agents array, create from tickets
             if (!agentsToShow.length) {
                 const agentMap = {};
                 currentData.tickets.forEach(ticket => {
@@ -1091,9 +1063,10 @@
                 `;
             });
             
-            // Individual tickets table
             const ticketTableBody = document.getElementById('ticketTableBody');
             ticketTableBody.innerHTML = '';
+            
+            console.log('Displaying tickets. Sample ticket:', currentData.tickets[0]);
             
             currentData.tickets.forEach(ticket => {
                 const badge = currentData.reportType === 'WCI Attribution' ? 'wci' : 'outbound';
@@ -1116,7 +1089,6 @@
             updateCombinedButton();
         }
         
-        // CSV handling
         const dropZone = document.getElementById('dropZone');
         
         dropZone.addEventListener('dragover', (e) => {
@@ -1196,6 +1168,25 @@
                     h === 'Conversation ID'
                 );
                 
+                const actionTimeIndex = headers.findIndex(h =>
+                    h.toLowerCase().includes('action time') ||
+                    h.toLowerCase().includes('closed at') ||
+                    h.toLowerCase().includes('close time')
+                );
+                
+                const createdAtIndex = headers.findIndex(h => {
+                    const lower = h.toLowerCase();
+                    return lower.includes('conversation started') || 
+                           lower.includes('created at') || 
+                           lower.includes('start time') ||
+                           lower.includes('started at');
+                });
+                
+                console.log('CSV Headers:', headers);
+                console.log('Reply Column Index:', replyColumnIndex);
+                console.log('Action Time Index:', actionTimeIndex);
+                console.log('Created At Index:', createdAtIndex);
+                
                 if (replyColumnIndex === -1) {
                     showStatus('Error: Could not find "Teammate replied to" column', 'error');
                     document.getElementById('wciLoading').classList.remove('show');
@@ -1212,6 +1203,18 @@
                     
                     const repliedTo = cols[replyColumnIndex];
                     const ticketId = cols[idColumnIndex] || `Ticket_${i}`;
+                    const actionTime = actionTimeIndex !== -1 ? cols[actionTimeIndex] : '-';
+                    const createdAt = createdAtIndex !== -1 ? cols[createdAtIndex] : '-';
+                    
+                    // Debug: Log first row to verify data extraction
+                    if (i === 1) {
+                        console.log('First row data:', {
+                            ticketId,
+                            actionTime,
+                            createdAt,
+                            repliedTo
+                        });
+                    }
                     
                     if (!repliedTo || repliedTo === '') continue;
                     
@@ -1230,7 +1233,8 @@
                         
                         tickets.push({
                             conversation_id: ticketId,
-                            closed_date: '-',
+                            created_date: createdAt,
+                            closed_date: actionTime,
                             last_updater: lastAgent
                         });
                     }
